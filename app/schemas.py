@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,3 +18,8 @@ class EntryIn(BaseModel):
     effective_date: date
     external_id: ExternalId
     memo: Memo = None
+
+
+class ImportIn(BaseModel):
+    # Rows stay untyped here so one malformed row is reported on its own instead of failing the whole file.
+    rows: list[Any] = Field(min_length=1, max_length=1000)

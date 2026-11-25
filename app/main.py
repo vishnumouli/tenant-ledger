@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from app import db, ledger
 from app.auth import Caller, get_caller, require_writer
 from app.db import get_conn
-from app.schemas import EntryIn
+from app.schemas import EntryIn, ImportIn
 
 
 @asynccontextmanager
@@ -48,6 +48,15 @@ def create_entry(
     if status == "duplicate":
         response.status_code = 200
     return {"status": status, "entry": ledger.entry_view(entry, caller), "warnings": warnings}
+
+
+@app.post("/v1/imports")
+def create_import(
+    body: ImportIn,
+    caller: Caller = Depends(require_writer),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    return ledger.import_rows(conn, caller, body.rows)
 
 
 @app.get("/v1/clients/{client_ref}/balance")

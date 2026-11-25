@@ -2,6 +2,8 @@ import json
 import sqlite3
 from datetime import date, datetime, timezone
 
+from pydantic import ValidationError
+
 from app import money
 from app.auth import Caller
 from app.db import write_tx
@@ -125,6 +127,25 @@ def post_entry(conn: sqlite3.Connection, caller: Caller, e: EntryIn) -> tuple[sq
         audit(conn, caller, "entry.created", entry_id, e.model_dump(mode="json"))
 
     return get_entry(conn, caller.firm_id, entry_id), "created", warnings
+
+
+def import_rows(conn: sqlite3.Connection, caller: Caller, rows: list) -> dict:
+    """Each row commits on its own, in order: good rows land, bad rows are reported, re-sent rows are no-ops."""
+    results = []
+    for index, raw in enumerate(rows):
+        try:
+            entry, status, warnings = post_entry(conn, caller, EntryIn.model_validate(raw))
+            results.append({"row": index, "status": status, "entry_id": entry["id"], "warnings": warnings})
+        except ValidationError as exc:
+            errors = [f"{'.'.join(map(str, err['loc'])) or 'row'}: {err['msg']}" for err in exc.errors()]
+            results.append({"row": index, "status": "rejected", "errors": errors})
+        except LedgerError as exc:
+            results.append({"row": index, "status": "rejected", "errors": [exc.message]})
+
+    counts = {s: sum(r["status"] == s for r in results) for s in ("created", "duplicate", "rejected")}
+    with write_tx(conn):
+        audit(conn, caller, "import.completed", None, {"rows": len(rows), **counts})
+    return {"summary": counts, "results": results}
 
 
 def _require_client(conn: sqlite3.Connection, firm_id: str, client_ref: str) -> None:
