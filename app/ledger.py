@@ -127,6 +127,39 @@ def post_entry(conn: sqlite3.Connection, caller: Caller, e: EntryIn) -> tuple[sq
     return get_entry(conn, caller.firm_id, entry_id), "created", warnings
 
 
+def _require_client(conn: sqlite3.Connection, firm_id: str, client_ref: str) -> None:
+    # Unknown and other-firm clients look identical (404), so existence never leaks across tenants.
+    found = conn.execute(
+        "SELECT 1 FROM entries WHERE firm_id = ? AND client_ref = ? LIMIT 1", (firm_id, client_ref)
+    ).fetchone()
+    if found is None:
+        raise NotFound(f"client {client_ref} not found")
+
+
+def balance_as_of(conn: sqlite3.Connection, firm_id: str, client_ref: str, as_of: date) -> list[dict]:
+    _require_client(conn, firm_id, client_ref)
+    rows = conn.execute(
+        "SELECT currency, SUM(amount_minor) AS total FROM entries "
+        "WHERE firm_id = ? AND client_ref = ? AND effective_date <= ? GROUP BY currency ORDER BY currency",
+        (firm_id, client_ref, as_of.isoformat()),
+    ).fetchall()
+    return [
+        {"currency": r["currency"], "amount": money.to_major(r["total"], r["currency"]), "amount_minor": r["total"]}
+        for r in rows
+    ]
+
+
+def list_entries(
+    conn: sqlite3.Connection, firm_id: str, client_ref: str, date_from: date | None, date_to: date | None
+) -> list[sqlite3.Row]:
+    _require_client(conn, firm_id, client_ref)
+    return conn.execute(
+        "SELECT * FROM entries WHERE firm_id = ? AND client_ref = ? "
+        "AND effective_date >= ? AND effective_date <= ? ORDER BY effective_date, id",
+        (firm_id, client_ref, (date_from or date.min).isoformat(), (date_to or date.max).isoformat()),
+    ).fetchall()
+
+
 def entry_view(row: sqlite3.Row, caller: Caller) -> dict:
     data = dict(row)
     data["amount"] = money.to_major(row["amount_minor"], row["currency"])

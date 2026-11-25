@@ -1,7 +1,8 @@
 import sqlite3
 from contextlib import asynccontextmanager
+from datetime import date, datetime, timezone
 
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from app import db, ledger
@@ -47,3 +48,30 @@ def create_entry(
     if status == "duplicate":
         response.status_code = 200
     return {"status": status, "entry": ledger.entry_view(entry, caller), "warnings": warnings}
+
+
+@app.get("/v1/clients/{client_ref}/balance")
+def client_balance(
+    client_ref: str,
+    as_of: date | None = None,
+    caller: Caller = Depends(get_caller),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    as_of = as_of or datetime.now(timezone.utc).date()
+    return {
+        "client_ref": client_ref,
+        "as_of": as_of,
+        "balances": ledger.balance_as_of(conn, caller.firm_id, client_ref, as_of),
+    }
+
+
+@app.get("/v1/clients/{client_ref}/entries")
+def client_entries(
+    client_ref: str,
+    date_from: date | None = Query(default=None, alias="from"),
+    date_to: date | None = Query(default=None, alias="to"),
+    caller: Caller = Depends(get_caller),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    rows = ledger.list_entries(conn, caller.firm_id, client_ref, date_from, date_to)
+    return {"client_ref": client_ref, "entries": [ledger.entry_view(r, caller) for r in rows]}
