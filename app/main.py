@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from app import db, ledger
 from app.auth import Caller, get_caller, require_writer
 from app.db import get_conn
-from app.schemas import EntryIn, ImportIn
+from app.schemas import EntryIn, ImportIn, TransferIn
 
 
 @asynccontextmanager
@@ -48,6 +48,23 @@ def create_entry(
     if status == "duplicate":
         response.status_code = 200
     return {"status": status, "entry": ledger.entry_view(entry, caller), "warnings": warnings}
+
+
+@app.post("/v1/transfers", status_code=201)
+def create_transfer(
+    body: TransferIn,
+    response: Response,
+    caller: Caller = Depends(require_writer),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    legs, status = ledger.post_transfer(conn, caller, body)
+    if status == "duplicate":
+        response.status_code = 200
+    return {
+        "status": status,
+        "transfer_id": legs[0]["transfer_id"],
+        "entries": [ledger.entry_view(leg, caller) for leg in legs],
+    }
 
 
 @app.post("/v1/imports")

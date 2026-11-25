@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import uuid
 from datetime import date, datetime, timezone
 
 from pydantic import ValidationError
@@ -7,7 +8,7 @@ from pydantic import ValidationError
 from app import money
 from app.auth import Caller
 from app.db import write_tx
-from app.schemas import EntryIn
+from app.schemas import EntryIn, TransferIn
 
 # Money in is positive, money out is negative, so a balance is just SUM(amount_minor).
 SIGNS = {"deposit": 1, "withdrawal": -1, "fee": -1}
@@ -127,6 +128,49 @@ def post_entry(conn: sqlite3.Connection, caller: Caller, e: EntryIn) -> tuple[sq
         audit(conn, caller, "entry.created", entry_id, e.model_dump(mode="json"))
 
     return get_entry(conn, caller.firm_id, entry_id), "created", warnings
+
+
+def _transfer_legs(conn: sqlite3.Connection, firm_id: str, transfer_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM entries WHERE firm_id = ? AND transfer_id = ? AND type IN ('transfer_out', 'transfer_in') "
+        "ORDER BY amount_minor",
+        (firm_id, transfer_id),
+    ).fetchall()
+
+
+def post_transfer(conn: sqlite3.Connection, caller: Caller, t: TransferIn) -> tuple[list[sqlite3.Row], str]:
+    """Move money between two clients of the caller's firm. Both legs commit together or not at all.
+
+    Cross-firm transfers cannot be expressed: both clients are always looked up inside caller.firm_id.
+    The external_id is stored on the outgoing leg; the incoming leg is linked by transfer_id.
+    """
+    minor = _parse_amount(t.amount, t.currency)
+    _check_date(t.effective_date)
+    day = t.effective_date.isoformat()
+
+    with write_tx(conn):
+        existing = conn.execute(
+            "SELECT * FROM entries WHERE firm_id = ? AND external_id = ?", (caller.firm_id, t.external_id)
+        ).fetchone()
+        if existing is not None:
+            legs = _transfer_legs(conn, caller.firm_id, existing["transfer_id"]) if existing["transfer_id"] else []
+            same = len(legs) == 2 and (
+                legs[0]["client_ref"], legs[1]["client_ref"], legs[1]["amount_minor"], legs[0]["currency"],
+                legs[0]["effective_date"],
+            ) == (t.from_client, t.to_client, minor, t.currency, day)
+            if not same:
+                raise Conflict(f"external_id {t.external_id!r} was already used with different details")
+            return legs, "duplicate"
+
+        _ensure_funds(conn, caller.firm_id, t.from_client, t.currency, minor)
+        transfer_id = uuid.uuid4().hex
+        common = {"currency": t.currency, "effective_date": day, "transfer_id": transfer_id, "memo": t.memo}
+        out_id = _insert_entry(conn, caller, client_ref=t.from_client, type="transfer_out",
+                               amount_minor=-minor, external_id=t.external_id, **common)
+        _insert_entry(conn, caller, client_ref=t.to_client, type="transfer_in", amount_minor=minor, **common)
+        audit(conn, caller, "transfer.created", out_id, {"transfer_id": transfer_id, **t.model_dump(mode="json")})
+
+    return _transfer_legs(conn, caller.firm_id, transfer_id), "created"
 
 
 def import_rows(conn: sqlite3.Connection, caller: Caller, rows: list) -> dict:
