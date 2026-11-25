@@ -38,6 +38,12 @@ class TransferIn(BaseModel):
         return self
 
 
+class ReversalIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class ImportIn(BaseModel):
     # Rows stay untyped here so one malformed row is reported on its own instead of failing the whole file.
     rows: list[Any] = Field(min_length=1, max_length=1000)

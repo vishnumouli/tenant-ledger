@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from app import db, ledger
 from app.auth import Caller, get_caller, require_writer
 from app.db import get_conn
-from app.schemas import EntryIn, ImportIn, TransferIn
+from app.schemas import EntryIn, ImportIn, ReversalIn, TransferIn
 
 
 @asynccontextmanager
@@ -65,6 +65,17 @@ def create_transfer(
         "transfer_id": legs[0]["transfer_id"],
         "entries": [ledger.entry_view(leg, caller) for leg in legs],
     }
+
+
+@app.post("/v1/entries/{entry_id}/reversal", status_code=201)
+def create_reversal(
+    entry_id: int,
+    body: ReversalIn,
+    caller: Caller = Depends(require_writer),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    reversals = ledger.reverse_entry(conn, caller, entry_id, body.reason)
+    return {"reversals": [ledger.entry_view(r, caller) for r in reversals]}
 
 
 @app.post("/v1/imports")

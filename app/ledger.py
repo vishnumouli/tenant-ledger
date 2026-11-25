@@ -173,6 +173,38 @@ def post_transfer(conn: sqlite3.Connection, caller: Caller, t: TransferIn) -> tu
     return _transfer_legs(conn, caller.firm_id, transfer_id), "created"
 
 
+def reverse_entry(conn: sqlite3.Connection, caller: Caller, entry_id: int, reason: str) -> list[sqlite3.Row]:
+    """Correct a wrong entry by appending its exact opposite; the original is never edited or deleted.
+
+    The reversal keeps the original effective_date, so past balances (e.g. last quarter-end) are corrected too.
+    Reversing either leg of a transfer reverses both legs.
+    """
+    with write_tx(conn):
+        target = get_entry(conn, caller.firm_id, entry_id)
+        if target["type"] == "reversal":
+            raise Conflict("a reversal cannot be reversed; post a new entry instead")
+        targets = _transfer_legs(conn, caller.firm_id, target["transfer_id"]) if target["transfer_id"] else [target]
+
+        for t in targets:
+            already = conn.execute("SELECT id FROM entries WHERE reverses_entry_id = ?", (t["id"],)).fetchone()
+            if already is not None:
+                raise Conflict(f"entry {t['id']} was already reversed by entry {already['id']}")
+            if t["amount_minor"] > 0:
+                _ensure_funds(conn, caller.firm_id, t["client_ref"], t["currency"], t["amount_minor"])
+
+        reversal_ids = [
+            _insert_entry(
+                conn, caller, client_ref=t["client_ref"], type="reversal", amount_minor=-t["amount_minor"],
+                currency=t["currency"], effective_date=t["effective_date"], reverses_entry_id=t["id"], memo=reason,
+            )
+            for t in targets
+        ]
+        audit(conn, caller, "entry.reversed", entry_id,
+              {"reversed": [t["id"] for t in targets], "reversals": reversal_ids, "reason": reason})
+
+    return [get_entry(conn, caller.firm_id, rid) for rid in reversal_ids]
+
+
 def import_rows(conn: sqlite3.Connection, caller: Caller, rows: list) -> dict:
     """Each row commits on its own, in order: good rows land, bad rows are reported, re-sent rows are no-ops."""
     results = []
