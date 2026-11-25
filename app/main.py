@@ -112,3 +112,12 @@ def client_entries(
 ):
     rows = ledger.list_entries(conn, caller.firm_id, client_ref, date_from, date_to)
     return {"client_ref": client_ref, "entries": [ledger.entry_view(r, caller) for r in rows]}
+
+
+@app.get("/v1/audit")
+def audit_log(
+    limit: int = Query(default=100, ge=1, le=500),
+    caller: Caller = Depends(require_writer),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    return {"events": ledger.list_audit(conn, caller.firm_id, limit)}

@@ -257,8 +257,23 @@ def list_entries(
     ).fetchall()
 
 
+def list_audit(conn: sqlite3.Connection, firm_id: str, limit: int) -> list[dict]:
+    rows = conn.execute(
+        "SELECT id, actor, action, entity_id, detail, at FROM audit_events WHERE firm_id = ? ORDER BY id DESC LIMIT ?",
+        (firm_id, limit),
+    ).fetchall()
+    return [dict(r) | {"detail": json.loads(r["detail"])} for r in rows]
+
+
+# Support staff can look an account up, but don't need free-text notes or which colleague keyed each entry.
+SUPPORT_HIDDEN_FIELDS = ("memo", "created_by")
+
+
 def entry_view(row: sqlite3.Row, caller: Caller) -> dict:
     data = dict(row)
     data["amount"] = money.to_major(row["amount_minor"], row["currency"])
     del data["firm_id"]
+    if caller.role == "support":
+        for field in SUPPORT_HIDDEN_FIELDS:
+            del data[field]
     return data
