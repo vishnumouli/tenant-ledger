@@ -10,6 +10,8 @@ from app.auth import Caller, get_caller, require_writer
 from app.db import get_conn
 from app.schemas import EntryIn, ImportIn, ReversalIn, TransferIn
 
+MONTH = r"^\d{4}-(0[1-9]|1[0-2])$"
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -112,6 +114,18 @@ def client_entries(
 ):
     rows = ledger.list_entries(conn, caller.firm_id, client_ref, date_from, date_to)
     return {"client_ref": client_ref, "entries": [ledger.entry_view(r, caller) for r in rows]}
+
+
+@app.get("/v1/clients/{client_ref}/summary")
+def client_summary(
+    client_ref: str,
+    month_from: str = Query(alias="from", pattern=MONTH),
+    month_to: str = Query(alias="to", pattern=MONTH),
+    caller: Caller = Depends(get_caller),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    months = ledger.monthly_summary(conn, caller.firm_id, client_ref, month_from, month_to)
+    return {"client_ref": client_ref, "months": months}
 
 
 @app.get("/v1/audit")

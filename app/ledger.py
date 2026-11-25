@@ -257,6 +257,33 @@ def list_entries(
     ).fetchall()
 
 
+def monthly_summary(conn: sqlite3.Connection, firm_id: str, client_ref: str, month_from: str, month_to: str) -> list[dict]:
+    """One indexed GROUP BY query. A reversal is counted under the kind of entry it reverses,
+    so reversing a fee lowers "fees" rather than inflating "inflows"."""
+    _require_client(conn, firm_id, client_ref)
+    rows = conn.execute(
+        """
+        SELECT substr(e.effective_date, 1, 7) AS month, e.currency,
+               SUM(CASE WHEN COALESCE(o.type, e.type) IN ('deposit', 'transfer_in') THEN e.amount_minor ELSE 0 END) AS inflows,
+               -SUM(CASE WHEN COALESCE(o.type, e.type) IN ('withdrawal', 'transfer_out') THEN e.amount_minor ELSE 0 END) AS outflows,
+               -SUM(CASE WHEN COALESCE(o.type, e.type) = 'fee' THEN e.amount_minor ELSE 0 END) AS fees,
+               SUM(e.amount_minor) AS net
+        FROM entries e
+        LEFT JOIN entries o ON o.id = e.reverses_entry_id
+        WHERE e.firm_id = ? AND e.client_ref = ? AND e.effective_date >= ? AND e.effective_date <= ?
+        GROUP BY month, e.currency
+        ORDER BY month, e.currency
+        """,
+        # '-31' is a safe upper bound for every month because dates are compared as ISO strings.
+        (firm_id, client_ref, f"{month_from}-01", f"{month_to}-31"),
+    ).fetchall()
+    return [
+        {"month": r["month"], "currency": r["currency"],
+         **{k: money.to_major(r[k], r["currency"]) for k in ("inflows", "outflows", "fees", "net")}}
+        for r in rows
+    ]
+
+
 def list_audit(conn: sqlite3.Connection, firm_id: str, limit: int) -> list[dict]:
     rows = conn.execute(
         "SELECT id, actor, action, entity_id, detail, at FROM audit_events WHERE firm_id = ? ORDER BY id DESC LIMIT ?",
