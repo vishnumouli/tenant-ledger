@@ -1,0 +1,9 @@
+**Chose** where money is lost or trust breaks: integer minor-unit money with per-currency decimals and no overdraft; safe retries (required `external_id`, idempotent entries/transfers/imports); tenant isolation (firm comes only from the API key, other-firm data is a 404); history that cannot be rewritten (DB triggers block UPDATE/DELETE, corrections are reversals, audit written in the same transaction).
+**Also built:** partial-success bulk import with per-row reasons, balance as of any date, monthly summary, read-only support role with redacted fields, audit log endpoint.
+**Concurrency:** every write takes SQLite's write lock up front (`BEGIN IMMEDIATE`), so check-balance-then-insert is atomic even across processes; barrier-released parallel tests prove it and fail if the lock is weakened to plain `BEGIN`.
+**Risk:** overdraft is checked against the current total only, so a backdated withdrawal can make a past balance negative.
+**Risk:** clients are implicit, so a typo'd `client_ref` on a deposit silently creates a phantom client (fix: a client registry).
+**Risk:** reversals that would overdraw are refused, but a real firm may need to record that debt; "no future dates" uses UTC, so firms east of UTC cannot post today's date before UTC midnight.
+**Risk:** demo API keys are seeded in code (stored hashed), with no rotation or expiry; look-alike duplicates are only warned about at write time, not queued for review.
+**Skipped** (useful, but less critical in one hour): rate limiting, suspicious/large-amount flags, CSV upload, transfers inside bulk import, FX conversion, export, pagination.
+**At 100× load:** SQLite's single writer serialises every firm, so move to PostgreSQL with a per-client row lock (`SELECT … FOR UPDATE`); balances and summaries re-sum all history, so add monthly balance snapshots; large imports should become background jobs; add per-firm rate limits and partition data by firm.
