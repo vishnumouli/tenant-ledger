@@ -1,0 +1,23 @@
+[project]
+name = "tenant-ledger"
+version = "0.1.0"
+description = "Multi-tenant money-movement ledger"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.163.2",
+    "uvicorn>=0.54.0",
+]
+
+[tool.uv]
+package = false
+exclude-newer = "2026-11-18T00:00:00Z"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.2.0",
+]
